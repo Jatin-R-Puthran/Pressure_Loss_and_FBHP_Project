@@ -1,0 +1,113 @@
+//MATLAB code for Pressure Traverse Curve
+//By Jatin R Puthran
+//18JE0379
+
+Tubing_dia_m=62.3E-03;  %in m
+Roughness=30E-06; %in m
+Area_Cross_Section=pi()*Tubing_dia_m^2/4; %in m2
+Depth=0; %in m
+Depth_Total=3000; %in m
+Pwh=9.393E06; %in Pa
+Qgsc=8.0; %in m3/sec
+Velocity_Surface=Qgsc/Area_Cross_Section %in m/sec
+Gas_Density_Standard=0.95; %in kg/m3
+Gas_Gravity=0.77;
+FBHT=120 %in deg C (Bottom Hole Temp)
+FTHT=30; %in deg C (Tubing Head Temp)
+Temp_Gradient= (FBHT-FTHT)/Depth_Total; %in deg C per m
+Well_Inclination=pi()/2;
+Dimensionless_Roughness=Roughness/Tubing_dia_m;
+Molecular_Weight=28.97*Gas_Gravity;
+Delta_Depth=10; %in m
+Sum_Delta_depth=0; %in m
+P=Pwh;
+P_Head_Loss=Pwh;
+P_Fric_Loss=Pwh;
+P_acc_Loss=Pwh;
+T=FBHT;
+nstep=301;
+results=zeros(nstep,6);
+for i=1:nstep
+  Depth_m=Depth+Sum_Delta_depth;
+  T=Temp_Gradient*Depth_m+FTHT; %in deg C
+  T_Ran=(T*9/5)+491.67; %in deg R
+  T_abs=T+273.15; %in deg K
+  P_pc_psi=756.8-131.07*Gas_Gravity-3.6*Gas_Gravity^2; %pseudo critical pressure in psia
+  P_pc_Pa=P_pc_psi*6894.76; %pseudo critical pressure in Pa
+  T_pc_Ran=169.2+349.5*Gas_Gravity-74*Gas_Gravity^2;%pseudo critical temperature in deg R
+  T_pc_K=T_pc_Ran*5/9; %pseudo critical temperature in deg K
+  t=T_pc_Ran/T_Ran;
+  A=0.06125*t*exp(-1.2*(1-t)^2)/P_pc_psi;
+  f=inline('(-A*P/6894.76)+((x+x^2+x^3-x^4)/(1-x)^3)-((14.76*t-9.76*t^2+4.58*t^3)*x^2)+((90.7*t-242.2*t^2+42.4*t^3)*(x^(2.18+2.82*t)))')
+  syms x
+  g=inline(diff(f(A,P,t,x)));
+  syms x
+  x=0.1;
+  while abs(f(A,P,t,x))>1e-05
+      x1=x-f(A,P,t,x)/g(x);
+      x=x1;
+  end
+  Z=A*P/real(x)/6894.76;
+
+  
+  %computation of dzdp
+
+  h=1e-06; %peturbation to compute numerical derivative, Pa
+  P_h=P+h;
+  l=inline('(-A*P/6894.76)+((y+y^2+y^3-y^4)/(1-y)^3)-((14.76*t-9.76*t^2+4.58*t^3)*y^2)+((90.7*t-242.2*t^2+42.4*t^3)*(y^(2.18+2.82*t)))')
+  syms y
+  g=inline(diff(f(A,P_h,t,y)));
+  syms y
+  y=0.1;
+  while abs(f(A,P_h,t,y))>1e-05
+      y1=y-f(A,P_h,t,y)/g(y);
+      y=y1;
+  end
+  Z_h=A*P/real(y)/6894.76;
+  dzdp=(Z_h-Z)/(P_h-P);
+
+  
+  %computation of Density &Viscosity
+  Density=0.00149406*P*Molecular_Weight/Z/T_Ran/6894.76;
+  Density_SI=Density*1000;
+  Kl=(0.00094+0.000002*Molecular_Weight)*(T_Ran^1.5)/(200+19*Molecular_Weight+T_Ran);
+  X=3.5+(986/T_Ran)+(0.01*Molecular_Weight);
+  Y=2.4-0.2*X;
+  Viscosity=Kl*exp(X*Density^Y);
+  Viscosity_Pas=Viscosity*0.001;
+  Bg=Gas_Density_Standard/Density_SI;
+  Velocity=Bg*Qgsc/Area_Cross_Section;
+  Nre=4*Density_SI*Qgsc/pi()/Viscosity_Pas/Tubing_dia_m;
+  ff=0.25/(log10((Dimensionless_Roughness/3.7)+(5.74/Nre^0.9)))^2;
+  Coefficient_dpds_acc=(Density_SI*Velocity^2*((1/P)-(dzdp/Z)));
+  dpds_grav=Density_SI*9.8*sin(Well_Inclination);
+  Head_loss=dpds_grav*Delta_Depth;
+  P_Head_Loss=P_Head_Loss+Head_loss;
+  dpds_fric=(Density_SI*Velocity^2*ff/2/Tubing_dia_m);
+  Friction_Loss=dpds_fric*Delta_Depth;
+  P_Fric_Loss=P_Fric_Loss+Friction_Loss;
+  dpds_acc=(dpds_grav+dpds_fric)*Coefficient_dpds_acc/(1-Coefficient_dpds_acc);
+  Accelaration_Loss=dpds_acc*Delta_Depth;
+  P_acc_Loss=P_acc_Loss+Accelaration_Loss;
+  Total_Loss=Head_loss+Friction_Loss+Accelaration_Loss;
+  Sum_Delta_depth=Sum_Delta_depth+Delta_Depth;
+  P=P+Total_Loss;
+  results(i,1)=Depth_m;
+  results(i,2)=P;
+  results(i,3)=P_Head_Loss;
+  results(i,4)=P_Fric_Loss;
+  results(i,5)=P_acc_Loss;
+end
+
+alpha=Gas_Density_Standard*Z*T/Velocity_Surface/Area_Cross_Section/Molecular_Weight/0.00149406;
+Qgsc= 0:9
+P=alpha*Qgsc*10000 + 2*10^6
+plot(Qgsc,P)
+
+xlabel('Qgsc - m3/sec','FontSize',10,'FontWeight','bold');ylabel('BottomHole Pressure - Pa','FontSize',10,'FontWeight','bold')
+legend('WellHead Pressure=1.5E06 Pa','FontSize',10,'FontWeight','bold','Location','northeast')
+set(gca,'XAxisLocation','bottom','YAxisLocation','left')
+
+
+
+
